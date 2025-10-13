@@ -73,8 +73,34 @@
 	}
 	"cstrike"
 	{
+		"Addresses"
+		{
+			"cpp_delete_global_allocator_addr"
+			{
+				"signature" "cpp_delete_global_allocator"
+				"read" "1" // skip first byte
+			}
+		}
 		"Signatures"
 		{
+			// search for "(%0.2f) output: (%s,%s) -> (%s,%s,%.1f)(%s)"
+			"CBaseEntityOutput::FireOutput"
+			{
+				"windows"   "\x55\x8B\xEC\x81\xEC\x40\x01\x00\x00\x8B\xC1"
+				"windows64" "\x48\x8B\xC4\x48\x89\x50\x2A\x48\x89\x48\x2A\x41\x54"
+			}
+			// last function call inside of CBaseEntityOutput::FireOutput()
+			"cpp_delete"
+			{
+				"windows"   "\x55\x8B\xEC\x8B\x55\x2A\x85\xD2\x74\x2A\x8B\x41\x2A\xFF\x49"
+				"windows64" ""
+			}
+			// the thing that's passed into the delete call
+			"cpp_delete_global_allocator"
+			{
+				"windows"   "\xB9\x2A\x2A\x2A\x2A\x53\xE8\x2A\x2A\x2A\x2A\x8B\xDE"
+				"windows64" ""
+			}
 			// search for "ent_fire <target> [action]" to find the ent_fire command callback.
 			// the last function call should be the AddEvent function we're looking for...
 			// TODO: Might need g_EventQueue passed on windows64, linux64, and linux (or at least a dummy value)
@@ -127,6 +153,51 @@
 
 		"Offsets"
 		{
+			"MustHookFireOutput"
+			{
+				"windows"   "1"
+				"windows64" "1"
+			}
+			"CBaseEntityOutput::m_ActionList"
+			{
+				"windows"   "20"
+				"windows64" ""
+			}
+			"CEventAction::m_iTarget"
+			{
+				"windows"   "0"
+				"windows64" "0"
+			}
+			"CEventAction::m_iTargetInput"
+			{
+				"windows"   "4"
+				"windows64" "8"
+			}
+			"CEventAction::m_iParameter"
+			{
+				"windows"   "8"
+				"windows64" "16"
+			}
+			"CEventAction::m_flDelay"
+			{
+				"windows"   "12"
+				"windows64" "20"
+			}
+			"CEventAction::m_nTimesToFire"
+			{
+				"windows"   "16"
+				"windows64" "24"
+			}
+			"CEventAction::m_iIDStamp"
+			{
+				"windows"   "20"
+				"windows64" "28"
+			}
+			"CEventAction::m_pNext"
+			{
+				"windows"   "24"
+				"windows64" "28"
+			}
 			"m_angRotation"
 			{
 				"class"		"CBaseEntity"

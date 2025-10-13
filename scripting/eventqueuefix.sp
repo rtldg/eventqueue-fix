@@ -1,5 +1,5 @@
 
-//#define DEBUG
+#define DEBUG
 
 #define PLUGIN_NAME           "EventQueue fix"
 #define PLUGIN_AUTHOR         "carnifex"
@@ -34,6 +34,19 @@ bool g_bLateLoad;
 Handle g_hFindEntityByName;
 int g_iRefOffset;
 
+Handle g_hDelete; // C++'s `delete`
+Address g_DeleteGlob; // the `delete` allocator pointer thing
+// CBaseEntityOutput
+int g_iActionList;
+// CEventAction
+int g_iTarget;
+int g_iTargetInput;
+int g_iParameter;
+int g_iDelay;
+int g_iTimesToFire;
+int g_iIDStamp;
+int g_iNext;
+
 float g_fTimescale[MAXPLAYERS + 1];
 
 public Plugin myinfo =
@@ -58,11 +71,11 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 	CreateNative("SetEventsTimescale", Native_SetEventsTimescale);
 	CreateNative("IsClientEventsPaused", Native_IsClientPaused);
 	CreateNative("SetClientEventsPaused", Native_SetClientPaused);
-	
+
 	g_bLateLoad = late;
-	
+
 	RegPluginLibrary("eventqueuefix");
-	
+
 	return APLRes_Success;
 }
 
@@ -84,16 +97,16 @@ public void OnClientPutInServer(int client)
 {
 	g_fTimescale[client] = 1.0;
 	g_bPaused[client] = false;
-	
+
 	if(g_aPlayerEvents[client] == null)
 	{
 		g_aPlayerEvents[client] = new ArrayList(sizeof(event_t));
-	} 
+	}
 	else
 	{
 		g_aPlayerEvents[client].Clear();
 	}
-	
+
 	if(g_aOutputWait[client] == null)
 	{
 		g_aOutputWait[client] = new ArrayList(sizeof(entity_t));
@@ -126,16 +139,16 @@ void LoadDHooks()
 	{
 		SetFailState("Failed to load eventfix gamedata");
 	}
-	
+
 	int m_RefEHandleOff = gamedataConf.GetOffset("m_RefEHandle");
 	int ibuff = gamedataConf.GetOffset("m_angRotation");
 	g_iRefOffset = ibuff + m_RefEHandleOff;
-	
+
 	if (gamedataConf.GetOffset("FindEntityByName_StaticCall") == 1)
 		StartPrepSDKCall(SDKCall_Static);
 	else
 		StartPrepSDKCall(SDKCall_EntityList);
-	
+
 	if(!PrepSDKCall_SetFromConf(gamedataConf, SDKConf_Signature, "FindEntityByName"))
 		SetFailState("Faild to find FindEntityByName signature.");
 	PrepSDKCall_SetReturnInfo(SDKType_PlainOldData, SDKPass_ByValue);
@@ -144,9 +157,9 @@ void LoadDHooks()
 	PrepSDKCall_AddParameter(SDKType_CBaseEntity, SDKPass_Pointer, VDECODE_FLAG_ALLOWNULL | VDECODE_FLAG_ALLOWWORLD);
 	PrepSDKCall_AddParameter(SDKType_CBaseEntity, SDKPass_Pointer, VDECODE_FLAG_ALLOWNULL | VDECODE_FLAG_ALLOWWORLD);
 	PrepSDKCall_AddParameter(SDKType_CBaseEntity, SDKPass_Pointer, VDECODE_FLAG_ALLOWNULL | VDECODE_FLAG_ALLOWWORLD);
-	PrepSDKCall_AddParameter(SDKType_PlainOldData, SDKPass_ByValue); 
+	PrepSDKCall_AddParameter(SDKType_PlainOldData, SDKPass_ByValue);
 	g_hFindEntityByName = EndPrepSDKCall();
-	
+
 	Handle addEventThree = DHookCreateDetour(Address_Null, CallConv_THISCALL, ReturnType_Void, ThisPointer_Ignore);
 	if(!DHookSetFromConf(addEventThree, gamedataConf, SDKConf_Signature, "AddEventThree"))
 		SetFailState("Faild to find AddEventThree signature.");
@@ -162,14 +175,49 @@ void LoadDHooks()
 	DHookAddParam(addEventThree, HookParamType_Int);
 	if(!DHookEnableDetour(addEventThree, false, DHook_AddEventThree))
 		SetFailState("Couldn't enable AddEventThree detour.");
-	
+
 	Handle activateMultiTrigger = DHookCreateDetour(Address_Null, CallConv_THISCALL, ReturnType_Void, ThisPointer_CBaseEntity);
 	if(!DHookSetFromConf(activateMultiTrigger, gamedataConf, SDKConf_Signature, "ActivateMultiTrigger"))
 		SetFailState("Faild to find ActivateMultiTrigger signature.");
 	DHookAddParam(activateMultiTrigger, HookParamType_CBaseEntity);
 	if(!DHookEnableDetour(activateMultiTrigger, false, DHook_ActivateMultiTrigger))
 		SetFailState("Couldn't enable ActivateMultiTrigger detour.");
-	
+
+	if (gamedataConf.GetOffset("MustHookFireOutput") == 1)
+	{
+		Handle fireOutput = DHookCreateDetour(Address_Null, CallConv_THISCALL, ReturnType_Void, ThisPointer_Address);
+		if (DHookSetFromConf(fireOutput, gamedataConf, SDKConf_Signature, "CBaseEntityOutput::FireOutput"))
+			SetFailState("Failed to find FireOutput signature");
+		if (gamedataConf.GetOffset("LINUX") == 1)
+			DHookAddParam(fireOutput, HookParamType_ObjectPtr);
+		else
+			DHookAddParam(fireOutput, HookParamType_Object, 20);
+		DHookAddParam(fireOutput, HookParamType_Int);
+		DHookAddParam(fireOutput, HookParamType_Int);
+		DHookAddParam(fireOutput, HookParamType_Float);
+		if(!DHookEnableDetour(fireOutput, false, DHook_FireOutput))
+			SetFailState("Couldn't enable FireOutput detour.");
+
+		if(!PrepSDKCall_SetFromConf(gamedataConf, SDKConf_Signature, "cpp_delete"))
+			SetFailState("Failed to find cpp_delete signature.");
+		PrepSDKCall_AddParameter(SDKType_PlainOldData, SDKPass_ByValue);
+		PrepSDKCall_AddParameter(SDKType_PlainOldData, SDKPass_ByValue);
+		g_hDelete = EndPrepSDKCall();
+
+		g_DeleteGlob = gamedataConf.Address("cpp_delete_global_allocator_addr");
+		if (g_DeleteGlob == Address_Null)
+			SetFailState("Failed to find cpp_delete_global_allocator_addr address.");
+
+		g_iActionList = gamedataConf.GetOffset("CBaseEntityOutput::m_ActionList");
+		g_iTarget = gamedataConf.GetOffset("CEventAction::m_iTarget");
+		g_iTargetInput = gamedataConf.GetOffset("CEventAction::m_iTargetInput");
+		g_iParameter = gamedataConf.GetOffset("CEventAction::m_iParameter");
+		g_iDelay = gamedataConf.GetOffset("CEventAction::m_flDelay");
+		g_iTimesToFire = gamedataConf.GetOffset("CEventAction::m_nTimesToFire");
+		g_iIDStamp = gamedataConf.GetOffset("CEventAction::m_iIDStamp");
+		g_iNext = gamedataConf.GetOffset("CEventAction::m_pNext");
+	}
+
 	delete gamedataConf;
 }
 
@@ -178,19 +226,89 @@ int EntityToBCompatRef(Address player)
 {
 	if(player == Address_Null)
 		return INVALID_EHANDLE_INDEX;
-	
+
 	int m_RefEHandle = LoadFromAddress(player + view_as<Address>(g_iRefOffset), NumberType_Int32);
-	
+
 	if(m_RefEHandle == INVALID_EHANDLE_INDEX)
 		return INVALID_EHANDLE_INDEX;
-	
+
 	// https://github.com/perilouswithadollarsign/cstrike15_src/blob/29e4c1fda9698d5cebcdaf1a0de4b829fa149bf8/public/basehandle.h#L137
 	int entry_idx = m_RefEHandle & ENT_ENTRY_MASK;
-	
+
 	if(entry_idx >= MAX_EDICTS)
 		return m_RefEHandle | (1 << 31);
-	
+
 	return entry_idx;
+}
+
+MRESReturn DHook_FireOutput(int pThis, DHookParam params)
+{
+	event_t event;
+	event.activator = EntityToBCompatRef(view_as<Address>(params.Get(2)));
+	int entIndex = EntRefToEntIndex(event.activator);
+
+	if (entIndex < 1 || entIndex > MaxClients)
+	{
+		return MRES_Ignored;
+	}
+
+	int ev = LoadFromAddress(pThis + g_iActionList, NumberType_Int32);
+	int prev = 0;
+
+	while (ev != 0)
+	{
+		int iParameter = LoadFromAddress(ev + g_iParameter, NumberType_Int32);
+		if (m_iParameter == 0)
+		{
+			//g_EventQueue.AddEvent( STRING(ev->m_iTarget), STRING(ev->m_iTargetInput), Value, ev->m_flDelay + fDelay, pActivator, pCaller, ev->m_iIDStamp );
+		}
+		else
+		{
+			//variant_t ValueOverride;
+			//ValueOverride.SetString( ev->m_iParameter );
+			//g_EventQueue.AddEvent( STRING(ev->m_iTarget), STRING(ev->m_iTargetInput), ValueOverride, ev->m_flDelay, pActivator, pCaller, ev->m_iIDStamp );
+		}
+
+		bool bRemove = false;
+		int m_nTimesToFire = LoadFromAddress(ev + g_iTimesToFire, NumberType_Int32);
+
+		if (m_nTimesToFire != EVENT_FIRE_ALWAYS)
+		{
+			m_nTimesToFire--;
+			if (m_nTimesToFire == 0)
+			{
+				bRemove = true;
+			}
+			else
+			{
+				StoreToAddress(ev + g_iTimesToFire, m_nTimesToFire, NumberType_Int32);
+			}
+		}
+
+		int ev_next = LoadFromAddress(ev + g_iNext, NumberType_Int32);
+
+		if (!bRemove)
+		{
+			prev = ev;
+		}
+		else
+		{
+			if (prev != 0)
+			{
+				StoreToAddress(prev + g_iNext, ev_next, NumberType_Int32);
+			}
+			else
+			{
+				StoreToAddress(pThis + g_iActionList, ev_next, NumberType_Int32);
+			}
+
+			SDKCall(g_hDelete, g_DeleteGlob, ev);
+		}
+
+		ev = ev_next;
+	}
+
+	return MRES_Supercede;
 }
 
 public MRESReturn DHook_AddEventThree(Handle hParams)
@@ -203,11 +321,11 @@ public MRESReturn DHook_AddEventThree(Handle hParams)
 	{
 		return MRES_Ignored;
 	}
-	
+
 	DHookGetParamString(hParams, 1, event.target, 64);
 	DHookGetParamString(hParams, 2, event.targetInput, 64);
 	ResolveVariantValue(hParams, event);
-	
+
 	int ticks = RoundToCeil((view_as<float>(DHookGetParam(hParams, 4)) - FLT_EPSILON) / GetTickInterval());
 	event.delay = float(ticks);
 	event.caller = EntityToBCompatRef(view_as<Address>(DHookGetParam(hParams, 6)));
@@ -224,14 +342,14 @@ public MRESReturn DHook_AddEventThree(Handle hParams)
 public void ResolveVariantValue(Handle &params, event_t event)
 {
 	int type = DHookGetParamObjectPtrVar(params, 3, 16, ObjectValueType_Int);
-	
+
 	switch(type)
 	{
 		//Float
 		case 1:
 		{
 			float fVar = DHookGetParamObjectPtrVar(params, 3, 0, ObjectValueType_Float);
-			
+
 			//Type recognition is difficult, even for valve programmers. Sometimes floats are integers, lets fix that.
 			if(FloatAbs(fVar - RoundFloat(fVar)) < 0.000001)
 			{
@@ -241,21 +359,21 @@ public void ResolveVariantValue(Handle &params, event_t event)
 				FloatToString(fVar, event.variantValue, sizeof(event.variantValue));
 			}
 		}
-		
+
 		//Integer
 		case 5:
 		{
 			int iVar = DHookGetParamObjectPtrVar(params, 3, 0, ObjectValueType_Int);
 			IntToString(iVar, event.variantValue, sizeof(event.variantValue));
 		}
-		
+
 		//Color32
 		case 9:
 		{
 			int iVar = DHookGetParamObjectPtrVar(params, 3, 0, ObjectValueType_Int);
 			FormatEx(event.variantValue, sizeof(event.variantValue), "%d %d %d", (iVar&0xFF), (iVar&0xFF00) >> 8, (iVar&0xFF0000) >> 16);
 		}
-		
+
 		default:
 		{
 			DHookGetParamObjectPtrString(params, 3, 0, ObjectValueType_String, event.variantValue, sizeof(event.variantValue));
@@ -266,25 +384,25 @@ public void ResolveVariantValue(Handle &params, event_t event)
 public MRESReturn DHook_ActivateMultiTrigger(int pThis, DHookParam hParams)
 {
 	int client = hParams.Get(1);
-	
+
 	if(!(0 < client <= MaxClients) || !IsClientInGame(client) || IsFakeClient(client))
 		return MRES_Ignored;
-	
+
 	float m_flWait = GetEntPropFloat(pThis, Prop_Data, "m_flWait");
-	
+
 	bool bFound;
 	entity_t ent;
 	for(int i = 0; i < g_aOutputWait[client].Length; i++)
 	{
 		g_aOutputWait[client].GetArray(i, ent);
-		
+
 		if(pThis == EntRefToEntIndex(ent.caller))
 		{
 			bFound = true;
 			break;
 		}
 	}
-	
+
 	if(!bFound)
 	{
 		ent.caller = EntIndexToEntRef(pThis);
@@ -294,71 +412,71 @@ public MRESReturn DHook_ActivateMultiTrigger(int pThis, DHookParam hParams)
 		SetEntProp(pThis, Prop_Data, "m_nNextThinkTick", 0);
 		return MRES_Ignored;
 	}
-	
+
 	return MRES_Supercede;
 }
 
 int FindEntityByName(int startEntity, char[] targetname, int searchingEnt, int activator, int caller)
 {
 	Address targetEntityAddr = SDKCall(g_hFindEntityByName, startEntity, targetname, searchingEnt, activator, caller, 0);
-	
+
 	if(targetEntityAddr == Address_Null)
 		return -1;
-		
+
 	return EntRefToEntIndex(EntityToBCompatRef(targetEntityAddr));
 }
 
 public void ServiceEvent(event_t event)
 {
 	int targetEntity = -1;
-	
+
 	int caller = EntRefToEntIndex(event.caller);
 	int activator = EntRefToEntIndex(event.activator);
-	
+
 	if(!IsValidEntity(caller))
 		caller = -1;
-	
+
 	// In the context of the event, the searching entity is also the caller
 	while ((targetEntity = FindEntityByName(targetEntity, event.target, caller, activator, caller)) != -1)
 	{
 		SetVariantString(event.variantValue);
 		AcceptEntityInput(targetEntity, event.targetInput, activator, caller, event.outputID);
-		
+
 		#if defined DEBUG
 			PrintToServer("[%i] Performing output: %s, %i, %i, %s %s, %i, %f", GetGameTickCount(), event.target, targetEntity, caller, event.targetInput, event.variantValue, event.outputID, GetGameTime());
 		#endif
-	} 
+	}
 }
 
 public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3], float angles[3], int &weapon, int &subtype, int &cmdnum, int &tickcount, int &seed, int mouse[2])
 {
 	if(g_bPaused[client])
 		return Plugin_Continue;
-	
+
 	float timescale = g_fTimescale[client];
 
 	for(int i = 0; i < g_aOutputWait[client].Length; i++)
 	{
 		entity_t ent;
 		g_aOutputWait[client].GetArray(i, ent);
-		
+
 		ent.waitTime -= 1.0 * timescale;
 		g_aOutputWait[client].SetArray(i, ent);
-		
+
 		if(ent.waitTime <= 1.0 * timescale)
 		{
 			g_aOutputWait[client].Erase(i);
 			i--;
 		}
 	}
-	
+
 	for(int i = 0; i < g_aPlayerEvents[client].Length; i++)
 	{
 		event_t event;
 		g_aPlayerEvents[client].GetArray(i, event);
-		
+
 		event.delay -= 1.0 * timescale;
-		
+
 		g_aPlayerEvents[client].SetArray(i, event);
 		if(event.delay <= -1.0 * timescale)
 		{
@@ -367,7 +485,7 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 			i--;
 		}
 	}
-	
+
 	return Plugin_Continue;
 }
 
@@ -395,7 +513,7 @@ public any Native_GetClientEvents(Handle plugin, int numParams)
 
 	delete pe;
 	delete ow;
-	
+
 	SetNativeArray(2, ep, sizeof(eventpack_t));
 	return true;
 }
@@ -403,19 +521,19 @@ public any Native_GetClientEvents(Handle plugin, int numParams)
 public any Native_SetClientEvents(Handle plugin, int numParams)
 {
 	int client = GetNativeCell(1);
-	
+
 	if(client < 0 || client > MaxClients || !IsClientConnected(client) || !IsClientInGame(client) || IsClientSourceTV(client))
 		return false;
-		
+
 	eventpack_t ep;
 	GetNativeArray(2, ep, sizeof(eventpack_t));
-	
+
 	delete g_aPlayerEvents[client];
 	delete g_aOutputWait[client];
-	
+
 	g_aPlayerEvents[client] = ep.playerEvents.Clone();
 	g_aOutputWait[client] = ep.outputWaits.Clone();
-	
+
  	int length = g_aPlayerEvents[client].Length;
 
 	for (int i = 0; i < length; i++)
@@ -425,32 +543,32 @@ public any Native_SetClientEvents(Handle plugin, int numParams)
         event.activator = EntIndexToEntRef(client);
         g_aPlayerEvents[client].SetArray(i, event);
     }
-	
+
 	return true;
 }
 
 public any Native_SetEventsTimescale(Handle plugin, int numParams)
 {
 	int client = GetNativeCell(1);
-	
+
 	if(client < 0 || client > MaxClients || !IsClientConnected(client) || !IsClientInGame(client) || IsClientSourceTV(client))
 		return false;
-	
+
 	g_fTimescale[client] = GetNativeCell(2);
-	
+
 	return true;
 }
 
 public any Native_ClearClientEvents(Handle plugin, int numParams)
 {
 	int client = GetNativeCell(1);
-	
+
 	if(client < 0 || client > MaxClients || !IsClientConnected(client) || !IsClientInGame(client) || IsClientSourceTV(client))
 		return false;
-	
+
 	g_aOutputWait[client].Clear();
 	g_aPlayerEvents[client].Clear();
-	
+
 	return true;
 }
 
@@ -458,21 +576,21 @@ public any Native_SetClientPaused(Handle plugin, int numParams)
 {
 	int client = GetNativeCell(1);
 	bool pauseState = GetNativeCell(2);
-	
+
 	if(client < 0 || client > MaxClients || !IsClientConnected(client) || !IsClientInGame(client) || IsClientSourceTV(client))
 		return false;
-		
+
 	g_bPaused[client] = pauseState;
-	
+
 	return true;
 }
 
 public any Native_IsClientPaused(Handle plugin, int numParams)
 {
 	int client = GetNativeCell(1);
-	
+
 	if(client < 0 || client > MaxClients || !IsClientConnected(client) || !IsClientInGame(client) || IsClientSourceTV(client))
 		return ThrowNativeError(032, "Client is invalid.");
-		
+
 	return g_bPaused[client];
 }
