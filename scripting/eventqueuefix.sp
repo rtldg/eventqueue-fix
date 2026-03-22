@@ -323,7 +323,7 @@ public void ServiceEvent(event_t event)
 			// NOTE: we don't do "times to fire"...
 		
 			#if defined DEBUG
-			PrintToServer("[%i] AddOutput OnUser%d: %s, %s, %s, %f, %i, time: %f", GetGameTickCount(), N+1, event.target, event.targetInput, event.variantValue, event.delay, activator, GetGameTime());
+				PrintToServer("[%i] AddOutput OnUser%d: %s, %s, %s, %f, %i, time: %f", GetGameTickCount(), N+1, event.target, event.targetInput, event.variantValue, event.delay, activator, GetGameTime());
 			#endif
 
 			g_aOnUser1_4[activator][N].PushArray(event);
@@ -398,13 +398,17 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 			if (0 == strncmp(event.targetInput, "FireUser", 8) && '4' >= event.targetInput[8] >= '1')
 			{
 				int N = event.targetInput[8] - '1';
-				PrintToServer("OnUser%d", N+1);
+				#if defined DEBUG
+					PrintToServer("[%i] OnUser%d", GetGameTickCount(), N+1);
+				#endif
 				for (int A = 0, B = g_aOnUser1_4[client][N].Length; A < B; A++)
 				{
 					event_t OnUser_event;
 					g_aOnUser1_4[client][N].GetArray(0, OnUser_event);
 					g_aOnUser1_4[client][N].Erase(0);
-					PrintToServer("%s, %s, %s", OnUser_event.target, OnUser_event.targetInput, OnUser_event.variantValue);
+					#if defined DEBUG
+						PrintToServer("%s, %s, %s", OnUser_event.target, OnUser_event.targetInput, OnUser_event.variantValue);
+					#endif
 					ServiceEvent(OnUser_event);
 				}
 			}
