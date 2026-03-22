@@ -441,19 +441,16 @@ public any Native_GetClientEvents(Handle plugin, int numParams)
 	ArrayList pe = g_aPlayerEvents[client].Clone();
 	ArrayList ow = g_aOutputWait[client].Clone();
 	ArrayList ou[4];
-	for (int i = 0; i < 4; i++)
-		ou[i] = g_aOnUser1_4[client][i].Clone();
+	for (int i = 0; i < 4; i++) ou[i] = g_aOnUser1_4[client][i].Clone();
 
 	eventpack_t ep;
 	ep.playerEvents = view_as<ArrayList>(CloneHandle(pe, plugin));
 	ep.outputWaits = view_as<ArrayList>(CloneHandle(ow, plugin));
-	for (int i = 0; i < 4; i++)
-		ep.OnUser1_4[i] = view_as<ArrayList>(CloneHandle(ou[i], plugin));
+	for (int i = 0; i < 4; i++) ep.OnUser1_4[i] = view_as<ArrayList>(CloneHandle(ou[i], plugin));
 
 	delete pe;
 	delete ow;
-	for (int i = 0; i < 4; i++)
-		delete ou[i];
+	for (int i = 0; i < 4; i++) delete ou[i];
 	
 	SetNativeArray(2, ep, sizeof(eventpack_t));
 	return true;
