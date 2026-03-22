@@ -1,5 +1,5 @@
 
-//#define DEBUG
+#define DEBUG
 
 #define PLUGIN_NAME           "EventQueue fix"
 #define PLUGIN_AUTHOR         "carnifex"
@@ -29,6 +29,7 @@
 
 ArrayList g_aPlayerEvents[MAXPLAYERS + 1];
 ArrayList g_aOutputWait[MAXPLAYERS + 1];
+ArrayList g_aOnUser1_4[MAXPLAYERS + 1][4];
 bool g_bPaused[MAXPLAYERS + 1];
 bool g_bLateLoad;
 Handle g_hFindEntityByName;
@@ -85,29 +86,18 @@ public void OnClientPutInServer(int client)
 	g_fTimescale[client] = 1.0;
 	g_bPaused[client] = false;
 	
-	if(g_aPlayerEvents[client] == null)
-	{
-		g_aPlayerEvents[client] = new ArrayList(sizeof(event_t));
-	} 
-	else
-	{
-		g_aPlayerEvents[client].Clear();
-	}
-	
-	if(g_aOutputWait[client] == null)
-	{
-		g_aOutputWait[client] = new ArrayList(sizeof(entity_t));
-	}
-	else
-	{
-		g_aOutputWait[client].Clear();
-	}
+	g_aPlayerEvents[client] = new ArrayList(sizeof(event_t));
+	g_aOutputWait[client] = new ArrayList(sizeof(entity_t));
+	for (int i = 0; i < 4; i++)
+		g_aOnUser1_4[client][i] = new ArrayList(sizeof(entity_t));
 }
 
 public void OnClientDisconnect_Post(int client)
 {
 	delete g_aPlayerEvents[client];
 	delete g_aOutputWait[client];
+	for (int i = 0; i < 4; i++)
+		delete g_aOnUser1_4[client][i];
 }
 
 public void OnEntityCreated(int entity, const char[] classname)
@@ -216,6 +206,15 @@ public MRESReturn DHook_AddEventThree(Handle hParams)
 	#if defined DEBUG
 		PrintToServer("[%i] AddEventThree: %s, %s, %s, %f, %i, %i, %i, time: %f", GetGameTickCount(), event.target, event.targetInput, event.variantValue, event.delay, entIndex, EntRefToEntIndex(event.caller), event.outputID, GetGameTime());
 	#endif
+	
+	if (StrEqual(event.target, "!activator", false) && StrEqual(event.targetInput, "AddOutput", true))
+	{
+		if (0 == strncmp(event.variantValue, "OnUser", 6, false) && '4' >= event.variantValue[6] >= '1')
+		{
+			PrintToServer("AddOutput,OnUserN -- Yay!");
+			// TODO: Parse event and add to g_aOnUser1_4[entIndex][N]...
+		}
+	}
 
 	g_aPlayerEvents[entIndex].PushArray(event);
 	return MRES_Supercede;
@@ -320,6 +319,8 @@ public void ServiceEvent(event_t event)
 
 	bool byTargetname = false;
 	
+	//TODO: 0 == strncmp(event.targetInput, "FireUser", 8, false) && '4' >= event.targetInput[8] >= '1'
+	
 	// In the context of the event, the searching entity is also the caller
 	while ((targetEntity = FindEntityByName(targetEntity, event.target, caller, activator, caller)) != -1)
 	{
@@ -404,15 +405,25 @@ public any Native_GetClientEvents(Handle plugin, int numParams)
 	if(client < 0 || client > MaxClients || !IsClientConnected(client) || !IsClientInGame(client) || IsClientSourceTV(client))
 		return false;
 
+	if(numParams != 3 || GetNativeCell(3) != sizeof(eventpack_t))
+		return false;
+
 	ArrayList pe = g_aPlayerEvents[client].Clone();
 	ArrayList ow = g_aOutputWait[client].Clone();
+	ArrayList ou[4];
+	for (int i = 0; i < 4; i++)
+		ou[i] = g_aOnUser1_4[client][i].Clone();
 
 	eventpack_t ep;
 	ep.playerEvents = view_as<ArrayList>(CloneHandle(pe, plugin));
 	ep.outputWaits = view_as<ArrayList>(CloneHandle(ow, plugin));
+	for (int i = 0; i < 4; i++)
+		ep.OnUser1_4[i] = view_as<ArrayList>(CloneHandle(ou[i], plugin));
 
 	delete pe;
 	delete ow;
+	for (int i = 0; i < 4; i++)
+		delete ou[i];
 	
 	SetNativeArray(2, ep, sizeof(eventpack_t));
 	return true;
@@ -424,18 +435,26 @@ public any Native_SetClientEvents(Handle plugin, int numParams)
 	
 	if(client < 0 || client > MaxClients || !IsClientConnected(client) || !IsClientInGame(client) || IsClientSourceTV(client))
 		return false;
+
+	if(numParams != 3 || GetNativeCell(3) != sizeof(eventpack_t))
+		return false;
 		
 	eventpack_t ep;
 	GetNativeArray(2, ep, sizeof(eventpack_t));
 	
 	delete g_aPlayerEvents[client];
 	delete g_aOutputWait[client];
+	for (int i = 0; i < 4; i++)
+		delete g_aOnUser1_4[client][i];
 	
 	g_aPlayerEvents[client] = ep.playerEvents.Clone();
 	g_aOutputWait[client] = ep.outputWaits.Clone();
+	for (int i = 0; i < 4; i++)
+		g_aOnUser1_4[client][i] = ep.OnUser1_4[i].Clone();
 	
  	int length = g_aPlayerEvents[client].Length;
 
+	// TODO: do the same thing for OnUser1-4
 	for (int i = 0; i < length; i++)
     {
         event_t event;
