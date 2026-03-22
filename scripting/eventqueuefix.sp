@@ -88,16 +88,14 @@ public void OnClientPutInServer(int client)
 	
 	g_aPlayerEvents[client] = new ArrayList(sizeof(event_t));
 	g_aOutputWait[client] = new ArrayList(sizeof(entity_t));
-	for (int i = 0; i < 4; i++)
-		g_aOnUser1_4[client][i] = new ArrayList(sizeof(event_t));
+	for (int i = 0; i < 4; i++) g_aOnUser1_4[client][i] = new ArrayList(sizeof(event_t));
 }
 
 public void OnClientDisconnect_Post(int client)
 {
 	delete g_aPlayerEvents[client];
 	delete g_aOutputWait[client];
-	for (int i = 0; i < 4; i++)
-		delete g_aOnUser1_4[client][i];
+	for (int i = 0; i < 4; i++) delete g_aOnUser1_4[client][i];
 }
 
 public void OnEntityCreated(int entity, const char[] classname)
@@ -335,8 +333,6 @@ public void ServiceEvent(event_t event)
 
 	bool byTargetname = false;
 	
-	//TODO: 0 == strncmp(event.targetInput, "FireUser", 8, false) && '4' >= event.targetInput[8] >= '1'
-	
 	// In the context of the event, the searching entity is also the caller
 	while ((targetEntity = FindEntityByName(targetEntity, event.target, caller, activator, caller)) != -1)
 	{
@@ -478,13 +474,11 @@ public any Native_SetClientEvents(Handle plugin, int numParams)
 	
 	delete g_aPlayerEvents[client];
 	delete g_aOutputWait[client];
-	for (int i = 0; i < 4; i++)
-		delete g_aOnUser1_4[client][i];
+	for (int i = 0; i < 4; i++) delete g_aOnUser1_4[client][i];
 	
 	g_aPlayerEvents[client] = ep.playerEvents.Clone();
 	g_aOutputWait[client] = ep.outputWaits.Clone();
-	for (int i = 0; i < 4; i++)
-		g_aOnUser1_4[client][i] = ep.OnUser1_4[i].Clone();
+	for (int i = 0; i < 4; i++) g_aOnUser1_4[client][i] = ep.OnUser1_4[i].Clone();
 	
  	int length = g_aPlayerEvents[client].Length;
 
@@ -521,6 +515,7 @@ public any Native_ClearClientEvents(Handle plugin, int numParams)
 	
 	g_aOutputWait[client].Clear();
 	g_aPlayerEvents[client].Clear();
+	for (int i = 0; i < 4; i++) g_aOnUser1_4[client][i].Clear();
 	
 	return true;
 }
