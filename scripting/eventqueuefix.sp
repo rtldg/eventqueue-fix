@@ -204,31 +204,6 @@ public MRESReturn DHook_AddEventThree(Handle hParams)
 	#if defined DEBUG
 		PrintToServer("[%i] AddEventThree: %s, %s, %s, %f, %i, %i, %i, time: %f", GetGameTickCount(), event.target, event.targetInput, event.variantValue, event.delay, entIndex, EntRefToEntIndex(event.caller), event.outputID, GetGameTime());
 	#endif
-	
-	if (StrEqual(event.target, "!activator", false) && StrEqual(event.targetInput, "AddOutput", false))
-	{
-		if (0 == strncmp(event.variantValue, "OnUser", 6, false) && '4' >= event.variantValue[6] >= '1')
-		{
-			int N = event.variantValue[6] - '1';
-
-			char buffers[5][64];
-			// "OnUser1 anti_glitch_filter_d_1:testactivator::0:1"
-			ExplodeString(event.variantValue[8], ":", buffers, sizeof(buffers), sizeof(buffers[0]), true);
-			event.caller = event.activator;
-			event.target = buffers[0];
-			event.targetInput = buffers[1];
-			event.variantValue = buffers[2];
-			event.delay = StringToFloat(buffers[3]);
-			// NOTE: we don't do "times to fire"...
-		
-			#if defined DEBUG
-			PrintToServer("[%i] ^hijack->OnUser%d: %s, %s, %s, %f, %i, time: %f", GetGameTickCount(), N+1, event.target, event.targetInput, event.variantValue, event.delay, entIndex, GetGameTime());
-			#endif
-
-			g_aOnUser1_4[entIndex][N].PushArray(event);
-			return MRES_Supercede;
-		}
-	}
 
 	g_aPlayerEvents[entIndex].PushArray(event);
 	return MRES_Supercede;
@@ -330,6 +305,31 @@ public void ServiceEvent(event_t event)
 	
 	if(!IsValidEntity(caller))
 		caller = -1;
+	
+	if (StrEqual(event.target, "!activator", false) && StrEqual(event.targetInput, "AddOutput", false))
+	{
+		if (0 == strncmp(event.variantValue, "OnUser", 6, false) && '4' >= event.variantValue[6] >= '1')
+		{
+			int N = event.variantValue[6] - '1';
+
+			char buffers[5][64];
+			// "OnUser1 anti_glitch_filter_d_1:testactivator::0:1"
+			ExplodeString(event.variantValue[8], ":", buffers, sizeof(buffers), sizeof(buffers[0]), true);
+			event.caller = event.activator;
+			event.target = buffers[0];
+			event.targetInput = buffers[1];
+			event.variantValue = buffers[2];
+			event.delay = StringToFloat(buffers[3]);
+			// NOTE: we don't do "times to fire"...
+		
+			#if defined DEBUG
+			PrintToServer("[%i] AddOutput OnUser%d: %s, %s, %s, %f, %i, time: %f", GetGameTickCount(), N+1, event.target, event.targetInput, event.variantValue, event.delay, activator, GetGameTime());
+			#endif
+
+			g_aOnUser1_4[activator][N].PushArray(event);
+			return;
+		}
+	}
 
 	bool byTargetname = false;
 	
@@ -479,7 +479,6 @@ public any Native_SetClientEvents(Handle plugin, int numParams)
 	
  	int length = g_aPlayerEvents[client].Length;
 
-	// TODO: do the same thing for OnUser1-4
 	for (int i = 0; i < length; i++)
     {
         event_t event;
@@ -487,6 +486,17 @@ public any Native_SetClientEvents(Handle plugin, int numParams)
         event.activator = EntIndexToEntRef(client);
         g_aPlayerEvents[client].SetArray(i, event);
     }
+
+	for (int i = 0; i < 4; i++)
+	{
+		for (int A = 0, B = g_aOnUser1_4[client][i].Length; A < B; A++)
+		{
+			event_t event;
+			g_aOnUser1_4[client][i].GetArray(i, event);
+			event.activator = event.caller = EntIndexToEntRef(client);
+			g_aOnUser1_4[client][i].SetArray(i, event);
+		}
+	}
 	
 	return true;
 }
