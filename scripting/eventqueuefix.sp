@@ -4,7 +4,7 @@
 #define PLUGIN_NAME           "EventQueue fix"
 #define PLUGIN_AUTHOR         "carnifex"
 #define PLUGIN_DESCRIPTION    ""
-#define PLUGIN_VERSION        "1.4.0"
+#define PLUGIN_VERSION        "1.3.3"
 #define PLUGIN_URL            ""
 
 #include <sourcemod>
@@ -29,7 +29,6 @@
 
 ArrayList g_aPlayerEvents[MAXPLAYERS + 1];
 ArrayList g_aOutputWait[MAXPLAYERS + 1];
-ArrayList g_aOnUser1_4[MAXPLAYERS + 1][4];
 bool g_bPaused[MAXPLAYERS + 1];
 bool g_bLateLoad;
 Handle g_hFindEntityByName;
@@ -86,16 +85,29 @@ public void OnClientPutInServer(int client)
 	g_fTimescale[client] = 1.0;
 	g_bPaused[client] = false;
 	
-	g_aPlayerEvents[client] = new ArrayList(sizeof(event_t));
-	g_aOutputWait[client] = new ArrayList(sizeof(entity_t));
-	for (int N = 0; N < 4; N++) g_aOnUser1_4[client][N] = new ArrayList(sizeof(event_t));
+	if(g_aPlayerEvents[client] == null)
+	{
+		g_aPlayerEvents[client] = new ArrayList(sizeof(event_t));
+	} 
+	else
+	{
+		g_aPlayerEvents[client].Clear();
+	}
+	
+	if(g_aOutputWait[client] == null)
+	{
+		g_aOutputWait[client] = new ArrayList(sizeof(entity_t));
+	}
+	else
+	{
+		g_aOutputWait[client].Clear();
+	}
 }
 
 public void OnClientDisconnect_Post(int client)
 {
 	delete g_aPlayerEvents[client];
 	delete g_aOutputWait[client];
-	for (int N = 0; N < 4; N++) delete g_aOnUser1_4[client][N];
 }
 
 public void OnEntityCreated(int entity, const char[] classname)
@@ -134,7 +146,7 @@ void LoadDHooks()
 	PrepSDKCall_AddParameter(SDKType_CBaseEntity, SDKPass_Pointer, VDECODE_FLAG_ALLOWNULL | VDECODE_FLAG_ALLOWWORLD);
 	PrepSDKCall_AddParameter(SDKType_PlainOldData, SDKPass_ByValue); 
 	g_hFindEntityByName = EndPrepSDKCall();
-
+	
 	Handle addEventThree = DHookCreateDetour(Address_Null, CallConv_THISCALL, ReturnType_Void, ThisPointer_Ignore);
 	if(!DHookSetFromConf(addEventThree, gamedataConf, SDKConf_Signature, "AddEventThree"))
 		SetFailState("Faild to find AddEventThree signature.");
@@ -306,59 +318,32 @@ public void ServiceEvent(event_t event)
 	if(!IsValidEntity(caller))
 		caller = -1;
 	
-	if (StrEqual(event.target, "!activator", false) && StrEqual(event.targetInput, "AddOutput", false))
-	{
-		if (0 == strncmp(event.variantValue, "OnUser", 6, false) && '4' >= event.variantValue[6] >= '1')
-		{
-			int N = event.variantValue[6] - '1';
-
-			char buffers[5][64];
-			// "OnUser1 anti_glitch_filter_d_1:testactivator::0:1"
-			ExplodeString(event.variantValue[8], ":", buffers, sizeof(buffers), sizeof(buffers[0]), true);
-			event.caller = event.activator;
-			event.target = buffers[0];
-			event.targetInput = buffers[1];
-			event.variantValue = buffers[2];
-			event.delay = StringToFloat(buffers[3]);
-			// NOTE: we don't do "times to fire"...
-		
-			#if defined DEBUG
-				PrintToServer("[%i] AddOutput OnUser%d: %s, %s, %s, %f, %i, time: %f", GetGameTickCount(), N+1, event.target, event.targetInput, event.variantValue, event.delay, activator, GetGameTime());
-			#endif
-
-			g_aOnUser1_4[activator][N].PushArray(event);
-			return;
-		}
-	}
-
-	bool byTargetname = false;
+	int attemptCount = 0;
 	
 	// In the context of the event, the searching entity is also the caller
 	while ((targetEntity = FindEntityByName(targetEntity, event.target, caller, activator, caller)) != -1)
 	{
-		byTargetname = true;
-
+		char classname[32];
+		GetEntityClassname(targetEntity, classname, 32);
+		
+		attemptCount++;
+		if(attemptCount > 40)
+		{
+			PrintToServer("[EventQueueFix] ServiceEvent loop has run more than 40 times, aborting! TargetEntity idx: %i, class: %s", targetEntity, classname);
+			break;
+		}
+		
 		SetVariantString(event.variantValue);
-		AcceptEntityInput(targetEntity, event.targetInput, activator, caller, event.outputID);
+		if(!AcceptEntityInput(targetEntity, event.targetInput, activator, caller, event.outputID))
+		{
+			PrintToServer("[EventQueueFix] AcceptEntityInput returned false, aborting. TargetEntity idx: %i, class: %s", targetEntity, classname);
+			break;
+		}
 		
 		#if defined DEBUG
 			PrintToServer("[%i] Performing output: %s, %i, %i, %s %s, %i, %f", GetGameTickCount(), event.target, targetEntity, caller, event.targetInput, event.variantValue, event.outputID, GetGameTime());
 		#endif
 	} 
-
-	if (!byTargetname)
-	{
-		// In the context of the event, the searching entity is also the caller
-		while ((targetEntity = FindEntityByClassname(targetEntity, event.target)) != -1)
-		{
-			SetVariantString(event.variantValue);
-			AcceptEntityInput(targetEntity, event.targetInput, activator, caller, event.outputID);
-
-			#if defined DEBUG
-				PrintToServer("[%i] Performing output (w/ classname): %s, %i, %i, %s %s, %i, %f", GetGameTickCount(), event.target, targetEntity, caller, event.targetInput, event.variantValue, event.outputID, GetGameTime());
-			#endif
-		}
-	}
 }
 
 public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3], float angles[3], int &weapon, int &subtype, int &cmdnum, int &tickcount, int &seed, int mouse[2])
@@ -393,30 +378,8 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 		g_aPlayerEvents[client].SetArray(i, event);
 		if(event.delay <= -1.0 * timescale)
 		{
+			ServiceEvent(event);
 			g_aPlayerEvents[client].Erase(i);
-
-			if (0 == strncmp(event.targetInput, "FireUser", 8) && '4' >= event.targetInput[8] >= '1')
-			{
-				int N = event.targetInput[8] - '1';
-				#if defined DEBUG
-					PrintToServer("[%i] OnUser%d", GetGameTickCount(), N+1);
-				#endif
-				for (int A = 0, B = g_aOnUser1_4[client][N].Length; A < B; A++)
-				{
-					event_t OnUser_event;
-					g_aOnUser1_4[client][N].GetArray(0, OnUser_event);
-					g_aOnUser1_4[client][N].Erase(0);
-					#if defined DEBUG
-						PrintToServer("%s, %s, %s", OnUser_event.target, OnUser_event.targetInput, OnUser_event.variantValue);
-					#endif
-					ServiceEvent(OnUser_event);
-				}
-			}
-			else
-			{
-				ServiceEvent(event);
-			}
-	
 			i--;
 		}
 	}
@@ -439,22 +402,15 @@ public any Native_GetClientEvents(Handle plugin, int numParams)
 	if(client < 0 || client > MaxClients || !IsClientConnected(client) || !IsClientInGame(client) || IsClientSourceTV(client))
 		return false;
 
-	if(numParams != 3 || GetNativeCell(3) != sizeof(eventpack_t))
-		return false;
-
 	ArrayList pe = g_aPlayerEvents[client].Clone();
 	ArrayList ow = g_aOutputWait[client].Clone();
-	ArrayList ou[4];
-	for (int N = 0; N < 4; N++) ou[N] = g_aOnUser1_4[client][N].Clone();
 
 	eventpack_t ep;
 	ep.playerEvents = view_as<ArrayList>(CloneHandle(pe, plugin));
 	ep.outputWaits = view_as<ArrayList>(CloneHandle(ow, plugin));
-	for (int N = 0; N < 4; N++) ep.OnUser1_4[N] = view_as<ArrayList>(CloneHandle(ou[N], plugin));
 
 	delete pe;
 	delete ow;
-	for (int N = 0; N < 4; N++) delete ou[N];
 	
 	SetNativeArray(2, ep, sizeof(eventpack_t));
 	return true;
@@ -466,20 +422,15 @@ public any Native_SetClientEvents(Handle plugin, int numParams)
 	
 	if(client < 0 || client > MaxClients || !IsClientConnected(client) || !IsClientInGame(client) || IsClientSourceTV(client))
 		return false;
-
-	if(numParams != 3 || GetNativeCell(3) != sizeof(eventpack_t))
-		return false;
 		
 	eventpack_t ep;
 	GetNativeArray(2, ep, sizeof(eventpack_t));
 	
 	delete g_aPlayerEvents[client];
 	delete g_aOutputWait[client];
-	for (int N = 0; N < 4; N++) delete g_aOnUser1_4[client][N];
 	
 	g_aPlayerEvents[client] = ep.playerEvents.Clone();
 	g_aOutputWait[client] = ep.outputWaits.Clone();
-	for (int N = 0; N < 4; N++) g_aOnUser1_4[client][N] = ep.OnUser1_4[N].Clone();
 	
  	int length = g_aPlayerEvents[client].Length;
 
@@ -490,17 +441,6 @@ public any Native_SetClientEvents(Handle plugin, int numParams)
         event.activator = EntIndexToEntRef(client);
         g_aPlayerEvents[client].SetArray(i, event);
     }
-
-	for (int N = 0; N < 4; N++)
-	{
-		for (int A = 0, B = g_aOnUser1_4[client][N].Length; A < B; A++)
-		{
-			event_t event;
-			g_aOnUser1_4[client][N].GetArray(A, event);
-			event.activator = event.caller = EntIndexToEntRef(client);
-			g_aOnUser1_4[client][N].SetArray(A, event);
-		}
-	}
 	
 	return true;
 }
@@ -526,7 +466,6 @@ public any Native_ClearClientEvents(Handle plugin, int numParams)
 	
 	g_aOutputWait[client].Clear();
 	g_aPlayerEvents[client].Clear();
-	for (int N = 0; N < 4; N++) g_aOnUser1_4[client][N].Clear();
 	
 	return true;
 }
